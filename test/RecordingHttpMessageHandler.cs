@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -28,7 +29,11 @@ namespace Sufficit.Gateway.FluxTelecom.SMS.Tests
                 Method = request.Method.Method,
                 RequestUri = request.RequestUri?.ToString() ?? string.Empty,
                 Body = body,
-                ContentType = request.Content?.Headers?.ContentType?.ToString() ?? string.Empty
+                ContentType = request.Content?.Headers?.ContentType?.ToString() ?? string.Empty,
+                Headers = request.Headers.ToDictionary(
+                    pair => pair.Key,
+                    pair => string.Join(",", pair.Value),
+                    StringComparer.OrdinalIgnoreCase)
             });
 
             return _responseFactory(request);

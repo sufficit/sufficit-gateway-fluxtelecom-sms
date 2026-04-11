@@ -7,6 +7,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -23,6 +24,7 @@ namespace Sufficit.Gateway.FluxTelecom.SMS
     /// </remarks>
     public class FluxTelecomSmsClient : IDisposable
     {
+        private const string JSON_SEND_URL = "http://apisms.fluxtelecom.com.br/envio";
         private const string MESSAGE_STATUS_QUERY_URL = "http://apisms.fluxtelecom.com.br/integracao3.do";
         private const string LOGIN_PATH = "login.do";
         private const string DASHBOARD_PATH = "campanhalista.do";
@@ -41,6 +43,8 @@ namespace Sufficit.Gateway.FluxTelecom.SMS
         private const string STATUS_QUERY_TYPE_FIELD = "type";
         private const string STATUS_QUERY_IDS_FIELD = "id";
         private const string STATUS_QUERY_TYPE = "C";
+        private const string JSON_HEADER_ACCOUNT = "account";
+        private const string JSON_HEADER_CODE = "code";
 
         private const string ACTION_FIELD = "acao";
         private const string AJAX_ACTION = "AJAX";
@@ -72,6 +76,12 @@ namespace Sufficit.Gateway.FluxTelecom.SMS
         private static readonly JsonSerializerOptions MessageStatusSerializerOptions = new JsonSerializerOptions()
         {
             PropertyNameCaseInsensitive = true
+        };
+
+        private static readonly JsonSerializerOptions JsonPayloadSerializerOptions = new JsonSerializerOptions()
+        {
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+            PropertyNamingPolicy = null
         };
 
         private bool _authenticated;
@@ -344,6 +354,62 @@ namespace Sufficit.Gateway.FluxTelecom.SMS
             }
         }
 
+        /// <summary>
+        /// Sends one message through the official Flux Telecom JSON POST API described in section 7.1 of the provider manual.
+        /// </summary>
+        /// <param name="request">Single JSON message payload.</param>
+        /// <param name="cancellationToken">Cancellation token for the outbound request.</param>
+        /// <returns>The parsed provider JSON response.</returns>
+        public Task<FluxTelecomJsonSendResponse> SendJsonMessageAsync(FluxTelecomJsonMessageRequest request, CancellationToken cancellationToken = default)
+        {
+            if (request == null) throw new ArgumentNullException(nameof(request));
+            request.Validate();
+            return ExecuteJsonSendAsync(request, cancellationToken);
+        }
+
+        /// <summary>
+        /// Sends a grouped request through the official Flux Telecom JSON POST API described in section 7.2 of the provider manual.
+        /// </summary>
+        /// <param name="request">Grouped JSON payload.</param>
+        /// <param name="cancellationToken">Cancellation token for the outbound request.</param>
+        /// <returns>The parsed provider JSON response.</returns>
+        public Task<FluxTelecomJsonSendResponse> SendJsonBatchAsync(FluxTelecomJsonBatchRequest request, CancellationToken cancellationToken = default)
+        {
+            if (request == null) throw new ArgumentNullException(nameof(request));
+            request.Validate();
+
+            var body = new Dictionary<string, object>()
+            {
+                ["mensagens"] = request.Messages
+            };
+
+            return ExecuteJsonSendAsync(body, cancellationToken);
+        }
+
+        /// <summary>
+        /// Parses the official Flux Telecom callback payload documented in section 7.3 of the provider manual.
+        /// </summary>
+        /// <param name="json">Raw callback JSON body received by the consumer endpoint.</param>
+        /// <returns>The parsed callback payload.</returns>
+        public FluxTelecomJsonCallbackPayload ParseJsonCallback(string json)
+        {
+            if (string.IsNullOrWhiteSpace(json))
+                throw new ArgumentException("Callback JSON is required.", nameof(json));
+
+            try
+            {
+                var result = JsonSerializer.Deserialize<FluxTelecomJsonCallbackPayload>(json, MessageStatusSerializerOptions);
+                if (result == null)
+                    throw new InvalidOperationException("Flux Telecom returned an empty JSON payload for callback parsing.");
+
+                return result;
+            }
+            catch (JsonException exception)
+            {
+                throw new InvalidOperationException("Flux Telecom returned an invalid JSON payload for callback parsing.", exception);
+            }
+        }
+
         private async Task<FluxTelecomPortalPage> ExecuteAuthenticatedGetAsync(string relativePath, CancellationToken cancellationToken)
         {
             return await ExecutePageRequestAsync(
@@ -553,6 +619,39 @@ namespace Sufficit.Gateway.FluxTelecom.SMS
 
             var request = new HttpRequestMessage(HttpMethod.Get, MESSAGE_STATUS_QUERY_URL + "?" + queryString);
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            return request;
+        }
+
+        private async Task<FluxTelecomJsonSendResponse> ExecuteJsonSendAsync<TPayload>(TPayload payload, CancellationToken cancellationToken)
+        {
+            using var httpRequest = BuildJsonSendRequest(payload);
+            using var response = await _httpClient.SendAsync(httpRequest, cancellationToken).ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
+
+            var json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+
+            try
+            {
+                var result = JsonSerializer.Deserialize<FluxTelecomJsonSendResponse>(json, MessageStatusSerializerOptions);
+                if (result == null)
+                    throw new InvalidOperationException("Flux Telecom returned an empty JSON payload for JSON send.");
+
+                return result;
+            }
+            catch (JsonException exception)
+            {
+                throw new InvalidOperationException("Flux Telecom returned an invalid JSON payload for JSON send.", exception);
+            }
+        }
+
+        private HttpRequestMessage BuildJsonSendRequest<TPayload>(TPayload payload)
+        {
+            var json = JsonSerializer.Serialize(payload, JsonPayloadSerializerOptions);
+            var request = new HttpRequestMessage(HttpMethod.Post, JSON_SEND_URL);
+            request.Headers.Add(JSON_HEADER_ACCOUNT, _credentials.Email ?? string.Empty);
+            request.Headers.Add(JSON_HEADER_CODE, _credentials.Password ?? string.Empty);
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            request.Content = new StringContent(json, Encoding.UTF8, "application/json");
             return request;
         }
 

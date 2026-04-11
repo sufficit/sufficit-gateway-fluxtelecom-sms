@@ -27,14 +27,14 @@ When the provider account used during implementation could not access the restri
 
 ## Important limitations
 
-- This repository currently models the portal-backed flows that were validated in a live session.
-- The official manual documents extra JSON endpoints, but only the already verified portal-backed operations are implemented here.
+- This repository models the validated portal-backed flows plus the official JSON send, status, and callback surfaces that were explicitly documented by the provider manual.
+- The provider manual may still contain additional endpoints or account-specific permissions that were not validated in the live environment yet.
 - A successful simple-send request confirms portal acceptance, not guaranteed handset delivery.
 - The official provider PDF is intentionally not redistributed in this repository.
 
 ## Installation
 
-There is no published NuGet package at the moment. Reference the project directly or build the library from source.
+The project can be referenced directly from source and is also prepared for official Sufficit NuGet packaging.
 
 ```xml
 <ProjectReference Include="..\sufficit-gateway-fluxtelecom-sms\src\Sufficit.Gateway.FluxTelecom.SMS.csproj" />
@@ -51,6 +51,25 @@ The project targets:
 - `netstandard2.0`
 - `net7.0`
 - `net9.0`
+
+## Versioning
+
+This repository now follows the official Sufficit package versioning pattern.
+
+- `Debug`: fallback development version `1.99.0.0`
+- `Release` and `Packing`: timestamped version `1.yy.MMdd.HHmm`
+
+Example:
+
+- `1.26.0411.2235`
+
+NuGet package filenames may normalize numeric segments and therefore omit leading zeroes in the generated `.nupkg` name.
+
+The package/build configuration now includes:
+
+- `Debug`
+- `Release`
+- `Packing`
 
 ## Configuration
 
@@ -196,6 +215,67 @@ foreach (var message in statusResponse.Messages)
 
 This JSON query uses the documented `account` and `code` parameters from the provider manual. It is independent from the authenticated portal session used by the portal-backed workflows.
 
+### Official JSON send with callback
+
+The official provider manual also documents a JSON POST API at `http://apisms.fluxtelecom.com.br/envio`.
+
+This gateway now exposes both single and grouped JSON send methods, including the documented callback fields.
+
+```csharp
+var sendResponse = await client.SendJsonMessageAsync(new FluxTelecomJsonMessageRequest
+{
+	To = "5511999999999",
+	SendType = "1",
+	Message = "Sufficit JSON send test",
+	PartnerId = "order-001",
+	CallbackUrl = "https://example.com/sms/callback",
+	CallbackToken = "token-001"
+});
+
+Console.WriteLine($"Provider message id: {sendResponse.MessageId}");
+Console.WriteLine($"Return code: {sendResponse.Code}");
+Console.WriteLine($"Return description: {sendResponse.ReturnDescription}");
+```
+
+For grouped sends:
+
+```csharp
+var batchResponse = await client.SendJsonBatchAsync(new FluxTelecomJsonBatchRequest
+{
+	Messages =
+	{
+		new FluxTelecomJsonMessageRequest
+		{
+			To = "5511999999999",
+			SendType = "1",
+			Message = "Batch message 1"
+		},
+		new FluxTelecomJsonMessageRequest
+		{
+			To = "5511888888888",
+			SendType = "2",
+			Message = "Batch message 2",
+			PartnerId = "batch-002"
+		}
+	}
+});
+```
+
+### Callback payload model
+
+The callback workflow documented in section `7.3` can be parsed with the callback models already included in this project:
+
+```csharp
+var payload = client.ParseJsonCallback(rawJsonFromWebhook);
+
+foreach (var item in payload.Messages)
+{
+	Console.WriteLine($"Status: {item.Status}");
+	Console.WriteLine($"Partner id: {item.PartnerId}");
+	Console.WriteLine($"Response: {item.ResponseText}");
+}
+```
+
 ### Other validated operations
 
 The client also exposes:
@@ -210,6 +290,9 @@ The client also exposes:
 - `SearchPhoneAsync(...)`
 - `DownloadPhoneSearchReportAsync(...)`
 - `QueryMessageStatusesAsync(...)`
+- `SendJsonMessageAsync(...)`
+- `SendJsonBatchAsync(...)`
+- `ParseJsonCallback(...)`
 
 ## Delivery status note
 
@@ -233,6 +316,22 @@ After filling real portal credentials, run:
 ```bash
 dotnet test test/Sufficit.Gateway.FluxTelecom.SMS.Tests.csproj -c Release
 ```
+
+## NuGet package generation
+
+The project is prepared for local package generation through the official Sufficit `Packing` configuration.
+
+Create the package locally with:
+
+```bash
+dotnet pack src/Sufficit.Gateway.FluxTelecom.SMS.csproj --configuration Packing --output src/nupkgs
+```
+
+The generated `.nupkg` files will be written to:
+
+- `src/nupkgs`
+
+This repository also includes a GitHub Actions workflow that publishes packages to NuGet.org on pushes to `main`, using the repository secret `NUGET_API_KEY`.
 
 ## License
 

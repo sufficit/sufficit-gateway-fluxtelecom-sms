@@ -1,0 +1,56 @@
+name: Publish Packages
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    env:
+      SRC_DIR: ./src
+      NUPKGS_DIR: ${{ github.workspace }}/src/nupkgs
+      LEGACY_DOTNET_SDK_VERSION: 2.2.402
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v5
+
+    - name: Setup .NET Environment
+      uses: actions/setup-dotnet@v5
+      with:
+        dotnet-version: |
+          7.0.x
+          9.0.x
+
+    - name: Install legacy .NET Core SDK 2.2.x
+      shell: bash
+      run: |
+        curl -fsSL https://dot.net/v1/dotnet-install.sh -o "$RUNNER_TEMP/dotnet-install.sh"
+        bash "$RUNNER_TEMP/dotnet-install.sh" \
+          --version "${LEGACY_DOTNET_SDK_VERSION}" \
+          --install-dir "$RUNNER_TEMP/dotnet-legacy-2.2" \
+          --no-path
+
+    - name: Show installed SDKs
+      shell: bash
+      run: |
+        dotnet --list-sdks
+        "$RUNNER_TEMP/dotnet-legacy-2.2/dotnet" --list-sdks
+
+    - name: Install dependencies
+      working-directory: ${{ env.SRC_DIR }}
+      run: dotnet restore
+
+    - name: Build
+      working-directory: ${{ env.SRC_DIR }}
+      run: dotnet build --configuration Release
+
+    - name: Create NuGet package
+      working-directory: ${{ env.SRC_DIR }}
+      run: dotnet pack --configuration Release --output ${{ env.NUPKGS_DIR }}
+
+    - name: Publish to NuGet.org
+      working-directory: ${{ env.SRC_DIR }}
+      run: dotnet nuget push --skip-duplicate ${{ env.NUPKGS_DIR }}/*.nupkg --source https://api.nuget.org/v3/index.json --api-key ${{ secrets.NUGET_API_KEY }}

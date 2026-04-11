@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace Sufficit.Gateway.FluxTelecom.SMS.Tests
 {
     internal sealed class RecordedRequest
@@ -9,5 +11,7 @@ namespace Sufficit.Gateway.FluxTelecom.SMS.Tests
         public string Body { get; set; } = string.Empty;
 
         public string ContentType { get; set; } = string.Empty;
+
+        public IDictionary<string, string> Headers { get; set; } = new Dictionary<string, string>();
     }
 }

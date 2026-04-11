@@ -3,6 +3,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Xunit;
 
@@ -287,6 +288,121 @@ namespace Sufficit.Gateway.FluxTelecom.SMS.Tests
             Assert.Contains("type=C", request.RequestUri, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("id=1%3B2", request.RequestUri, StringComparison.OrdinalIgnoreCase);
             Assert.Equal(string.Empty, request.Body);
+        }
+
+        [Fact]
+        public async Task SendJsonMessageAsync_PostsOfficialJsonPayloadWithCallbackHeaders()
+        {
+            const string json = "{\"id_mensagem\":1726868950}";
+
+            using var handler = new RecordingHttpMessageHandler(request =>
+            {
+                if (request.RequestUri!.AbsoluteUri.StartsWith("http://apisms.fluxtelecom.com.br/envio", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        RequestMessage = request,
+                        Content = new StringContent(json, Encoding.UTF8, "application/json")
+                    };
+                }
+
+                return CreateHtmlResponse(request, SampleHtml.DashboardHtml);
+            });
+
+            using var client = FluxTelecomSmsClientTestFactory.Create(handler);
+            var response = await client.SendJsonMessageAsync(new FluxTelecomJsonMessageRequest()
+            {
+                To = "5511999999999",
+                SendType = "1",
+                Message = "Test callback message",
+                PartnerId = "envio-json-001",
+                CallbackUrl = "https://example.test/sms/callback",
+                CallbackToken = "callback-token"
+            });
+
+            Assert.Equal("1726868950", response.MessageId);
+            Assert.Single(handler.Requests);
+
+            var request = handler.Requests[0];
+            Assert.Equal("POST", request.Method);
+            Assert.Equal("application/json; charset=utf-8", request.ContentType);
+            Assert.Equal("portal@example.test", request.Headers["account"]);
+            Assert.Equal("secret", request.Headers["code"]);
+
+            using var document = JsonDocument.Parse(request.Body);
+            var root = document.RootElement;
+            Assert.Equal("5511999999999", root.GetProperty("to").GetString());
+            Assert.Equal("1", root.GetProperty("tipoEnvio").GetString());
+            Assert.Equal("Test callback message", root.GetProperty("msg").GetString());
+            Assert.Equal("envio-json-001", root.GetProperty("id").GetString());
+            Assert.Equal("https://example.test/sms/callback", root.GetProperty("urlCallback").GetString());
+            Assert.Equal("callback-token", root.GetProperty("tokenCallback").GetString());
+        }
+
+        [Fact]
+        public async Task SendJsonBatchAsync_PostsGroupedMessagesArray()
+        {
+            const string json = "{\"codigo\":\"0\",\"descricao_retorno\":\"SUCESSO\"}";
+
+            using var handler = new RecordingHttpMessageHandler(request =>
+            {
+                if (request.RequestUri!.AbsoluteUri.StartsWith("http://apisms.fluxtelecom.com.br/envio", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        RequestMessage = request,
+                        Content = new StringContent(json, Encoding.UTF8, "application/json")
+                    };
+                }
+
+                return CreateHtmlResponse(request, SampleHtml.DashboardHtml);
+            });
+
+            using var client = FluxTelecomSmsClientTestFactory.Create(handler);
+            var response = await client.SendJsonBatchAsync(new FluxTelecomJsonBatchRequest()
+            {
+                Messages =
+                {
+                    new FluxTelecomJsonMessageRequest()
+                    {
+                        To = "5511999999999",
+                        SendType = "1",
+                        Message = "Batch 1"
+                    },
+                    new FluxTelecomJsonMessageRequest()
+                    {
+                        To = "5511888888888",
+                        SendType = "2",
+                        Message = "Batch 2",
+                        PartnerId = "lote-002"
+                    }
+                }
+            });
+
+            Assert.Equal("0", response.Code);
+            Assert.Equal("SUCESSO", response.ReturnDescription);
+
+            using var document = JsonDocument.Parse(handler.Requests[0].Body);
+            var messages = document.RootElement.GetProperty("mensagens");
+            Assert.Equal(2, messages.GetArrayLength());
+            Assert.Equal("Batch 1", messages[0].GetProperty("msg").GetString());
+            Assert.Equal("lote-002", messages[1].GetProperty("id").GetString());
+        }
+
+        [Fact]
+        public void ParseJsonCallback_ParsesDeliveryAndReplyEntries()
+        {
+            const string json = "{\"mensagens\":[{\"telefone\":\"5567999036368\",\"data\":\"2020-02-12 21:00:04\",\"id\":1726868950,\"idParceiro\":\"5849682\",\"status\":\"ENTREGUE\"},{\"telefone\":\"5567999036368\",\"data\":\"2020-02-12 21:13:04\",\"resposta\":\"ok, obrigado\",\"id\":1726868950,\"idParceiro\":\"5849682\",\"status\":\"RESPOSTA\"}]}";
+
+            using var handler = new RecordingHttpMessageHandler(request => CreateHtmlResponse(request, SampleHtml.DashboardHtml));
+            using var client = FluxTelecomSmsClientTestFactory.Create(handler);
+
+            var payload = client.ParseJsonCallback(json);
+
+            Assert.Equal(2, payload.Messages.Count);
+            Assert.Equal("ENTREGUE", payload.Messages[0].Status);
+            Assert.Equal("RESPOSTA", payload.Messages[1].Status);
+            Assert.Equal("ok, obrigado", payload.Messages[1].ResponseText);
         }
 
         private static HttpResponseMessage CreateHtmlResponse(HttpRequestMessage request, string html)

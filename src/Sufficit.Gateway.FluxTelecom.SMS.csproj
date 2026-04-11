@@ -3,6 +3,7 @@
 	<PropertyGroup Label="Sufficit Targeting">
 		<TargetFrameworks>netstandard2.0;net7.0;net9.0</TargetFrameworks>
 		<RootNamespace>Sufficit.Gateway.FluxTelecom.SMS</RootNamespace>
+		<Configurations>Debug;Release</Configurations>
 	</PropertyGroup>
 
 	<PropertyGroup Label="Sufficit Versioning">
@@ -22,14 +23,27 @@
 		<CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
 		<PreserveCompilationReferences>false</PreserveCompilationReferences>
 		<RestoreProjectStyle>PackageReference</RestoreProjectStyle>
+		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+		<NoWarn>$(NoWarn);CS1591</NoWarn>
 	</PropertyGroup>
 
 	<PropertyGroup Label="Sufficit Package">
 		<Name>Sufficit.Gateway.FluxTelecom.SMS</Name>
 		<PackageId>Sufficit.Gateway.FluxTelecom.SMS</PackageId>
-		<PackageDescription>Flux Telecom SMS Gateway (by Sufficit)</PackageDescription>
+		<PackageDescription>Session-based .NET gateway for validated Flux Telecom SMS portal workflows and official JSON status or callback integrations.</PackageDescription>
+		<RepositoryType>git</RepositoryType>
+		<RepositoryUrl>https://github.com/sufficit/sufficit-gateway-fluxtelecom-sms</RepositoryUrl>
+		<PackageProjectUrl>https://github.com/sufficit/sufficit-gateway-fluxtelecom-sms</PackageProjectUrl>
+		<PackageReadmeFile>README.md</PackageReadmeFile>
 		<GeneratePackageOnBuild>false</GeneratePackageOnBuild>
 	</PropertyGroup>
+
+	<ItemGroup Label="Sufficit Pack Items">
+		<None Include="../README.md">
+			<Pack>True</Pack>
+			<PackagePath></PackagePath>
+		</None>
+	</ItemGroup>
 
 	<PropertyGroup Label="Sufficit Versioning Options" Condition="'$(TargetFramework)' == 'netstandard2.0'">
 		<PkgVersion>[9.*,10.0.0)</PkgVersion>
@@ -55,6 +69,7 @@
 		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="$(PkgVersion)" />
 		<PackageReference Include="Microsoft.Extensions.Options" Version="$(PkgVersion)" />
 		<PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="$(PkgVersion)" />
-		<PackageReference Include="System.Text.Json" Version="8.0.5" />
+		<PackageReference Include="System.Text.Json" Version="[8.0.5,9.0.0)" Condition=" '$(TargetFramework)' == 'net7.0' " />
+		<PackageReference Include="System.Text.Json" Version="$(PkgVersion)" Condition=" '$(TargetFramework)' == 'net9.0' OR '$(TargetFramework)' == 'netstandard2.0' " />
 	</ItemGroup>
 </Project>
