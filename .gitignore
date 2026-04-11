@@ -1,0 +1,6 @@
+.vs/
+**/bin/
+**/obj/
+TestResults/
+test/appsettings.json
+api-v2.7.2.pdf
