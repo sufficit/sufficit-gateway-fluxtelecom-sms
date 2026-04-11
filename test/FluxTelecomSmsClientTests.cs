@@ -244,6 +244,51 @@ namespace Sufficit.Gateway.FluxTelecom.SMS.Tests
             Assert.Contains("21_967609095_Hugo|", request.Body, StringComparison.OrdinalIgnoreCase);
         }
 
+        [Fact]
+        public async Task QueryMessageStatusesAsync_UsesOfficialJsonEndpointAndParsesMessages()
+        {
+            const string json = "{\"mensagens\":[{\"id_mensagem\":1637364991,\"data_entrega\":\"08/10/2019 14:09:00\",\"id_status\":120,\"data_inclusao\":\"08/10/2019 14:09:41\",\"id_parceiro\":\"1\",\"data_envio\":\"08/10/2019 14:09:43\",\"descricao_status\":\"MENSAGEM ENTREGUE\"},{\"id_mensagem\":1625346410,\"data_entrega\":\"13/09/2019 16:21:00\",\"id_status\":120,\"data_inclusao\":\"13/09/2019 16:21:33\",\"id_parceiro\":\"2\",\"data_envio\":\"13/09/2019 16:21:38\",\"descricao_status\":\"MENSAGEM ENTREGUE\"}]}";
+
+            using var handler = new RecordingHttpMessageHandler(request =>
+            {
+                if (request.RequestUri!.AbsoluteUri.StartsWith("http://apisms.fluxtelecom.com.br/integracao3.do", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        RequestMessage = request,
+                        Content = new StringContent(json, Encoding.UTF8, "application/json")
+                    };
+                }
+
+                return CreateHtmlResponse(request, SampleHtml.DashboardHtml);
+            });
+
+            using var client = FluxTelecomSmsClientTestFactory.Create(handler);
+
+            var response = await client.QueryMessageStatusesAsync(new FluxTelecomMessageStatusQueryRequest()
+            {
+                Account = "cliente@cliente.com.br",
+                Code = "senha",
+                MessageIds = { 1, 2 }
+            });
+
+            Assert.Equal(2, response.Messages.Count);
+            Assert.Equal(1637364991, response.Messages[0].MessageId);
+            Assert.Equal("MENSAGEM ENTREGUE", response.Messages[0].StatusDescription);
+            Assert.Equal("2", response.Messages[1].PartnerId);
+
+            Assert.Single(handler.Requests);
+
+            var request = handler.Requests[0];
+            Assert.Equal("GET", request.Method);
+            Assert.StartsWith("http://apisms.fluxtelecom.com.br/integracao3.do?", request.RequestUri, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("account=cliente%40cliente.com.br", request.RequestUri, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("code=senha", request.RequestUri, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("type=C", request.RequestUri, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("id=1%3B2", request.RequestUri, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(string.Empty, request.Body);
+        }
+
         private static HttpResponseMessage CreateHtmlResponse(HttpRequestMessage request, string html)
         {
             return new HttpResponseMessage(HttpStatusCode.OK)

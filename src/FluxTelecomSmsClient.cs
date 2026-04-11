@@ -6,23 +6,24 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace Sufficit.Gateway.FluxTelecom.SMS
 {
     /// <summary>
-    /// Session-based client for the Flux Telecom SMS portal and the currently validated portal-backed workflows.
+    /// Session-based client for the Flux Telecom SMS portal plus the official JSON message status consultation documented by the provider.
     /// </summary>
     /// <remarks>
     /// The official API PDF v2.7.2 documents additional HTTP/JSON capabilities besides the authenticated portal.
     /// In particular, section 1.7 describes a JSON delivery-status query through <c>integracao3.do</c> with <c>type=C</c>
-    /// and one or more message identifiers. That JSON consultation flow is documented here for project context, but it is
-    /// not modeled by this client yet because the current implementation focus remains the portal-backed operations already
-    /// validated in the live environment.
+    /// and one or more message identifiers. This client keeps the validated portal-backed operations and now also exposes
+    /// that official JSON consultation flow explicitly through <see cref="QueryMessageStatusesAsync(FluxTelecomMessageStatusQueryRequest, CancellationToken)"/>.
     /// </remarks>
     public class FluxTelecomSmsClient : IDisposable
     {
+        private const string MESSAGE_STATUS_QUERY_URL = "http://apisms.fluxtelecom.com.br/integracao3.do";
         private const string LOGIN_PATH = "login.do";
         private const string DASHBOARD_PATH = "campanhalista.do";
         private const string FTP_LIST_PATH = "listaftp.do";
@@ -35,6 +36,11 @@ namespace Sufficit.Gateway.FluxTelecom.SMS
         private const string INTEGRATION_LIST_PATH = "integracaolista.do";
         private const string SIMPLE_MESSAGE_FORM_PATH = "mensagemsimplescadastro.do";
         private const string SIMPLE_MESSAGE_INSERT_PATH = "mensagemsimplesinsert.do";
+        private const string STATUS_QUERY_ACCOUNT_FIELD = "account";
+        private const string STATUS_QUERY_CODE_FIELD = "code";
+        private const string STATUS_QUERY_TYPE_FIELD = "type";
+        private const string STATUS_QUERY_IDS_FIELD = "id";
+        private const string STATUS_QUERY_TYPE = "C";
 
         private const string ACTION_FIELD = "acao";
         private const string AJAX_ACTION = "AJAX";
@@ -62,6 +68,11 @@ namespace Sufficit.Gateway.FluxTelecom.SMS
         private readonly ILogger<FluxTelecomSmsClient> _logger;
         private readonly HttpClient _httpClient;
         private readonly bool _ownsHttpClient;
+
+        private static readonly JsonSerializerOptions MessageStatusSerializerOptions = new JsonSerializerOptions()
+        {
+            PropertyNameCaseInsensitive = true
+        };
 
         private bool _authenticated;
         private bool _disposed;
@@ -285,7 +296,7 @@ namespace Sufficit.Gateway.FluxTelecom.SMS
         /// <returns>The raw classified portal page returned after submission.</returns>
         /// <remarks>
         /// A successful submission through this method confirms acceptance by the portal workflow, not guaranteed handset delivery.
-        /// Delivery confirmation requires a separate status consultation flow such as the JSON API described in the official PDF section 1.7.
+        /// Delivery confirmation can be consulted later through <see cref="QueryMessageStatusesAsync(FluxTelecomMessageStatusQueryRequest, CancellationToken)"/>.
         /// </remarks>
         public Task<FluxTelecomPortalPage> SendSimpleMessageAsync(FluxTelecomSimpleMessageRequest request, CancellationToken cancellationToken = default)
         {
@@ -297,6 +308,40 @@ namespace Sufficit.Gateway.FluxTelecom.SMS
                 () => BuildSimpleMessageInsertRequest(request),
                 cancellationToken,
                 true);
+        }
+
+        /// <summary>
+        /// Queries one or more provider-generated message identifiers through the official JSON endpoint documented in section 1.7 of the provider manual.
+        /// </summary>
+        /// <param name="request">Official JSON query payload with <c>account</c>, <c>code</c>, and one or more message ids.</param>
+        /// <param name="cancellationToken">Cancellation token for the outbound request.</param>
+        /// <returns>The parsed provider JSON payload with the returned message statuses.</returns>
+        /// <remarks>
+        /// This method does not depend on an authenticated portal session. It uses the documented JSON endpoint directly.
+        /// </remarks>
+        public async Task<FluxTelecomMessageStatusResponse> QueryMessageStatusesAsync(FluxTelecomMessageStatusQueryRequest request, CancellationToken cancellationToken = default)
+        {
+            if (request == null) throw new ArgumentNullException(nameof(request));
+            request.Validate();
+
+            using var httpRequest = BuildMessageStatusQueryRequest(request);
+            using var response = await _httpClient.SendAsync(httpRequest, cancellationToken).ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
+
+            var json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+
+            try
+            {
+                var result = JsonSerializer.Deserialize<FluxTelecomMessageStatusResponse>(json, MessageStatusSerializerOptions);
+                if (result == null)
+                    throw new InvalidOperationException("Flux Telecom returned an empty JSON payload for message status query.");
+
+                return result;
+            }
+            catch (JsonException exception)
+            {
+                throw new InvalidOperationException("Flux Telecom returned an invalid JSON payload for message status query.", exception);
+            }
         }
 
         private async Task<FluxTelecomPortalPage> ExecuteAuthenticatedGetAsync(string relativePath, CancellationToken cancellationToken)
@@ -494,6 +539,42 @@ namespace Sufficit.Gateway.FluxTelecom.SMS
 
             request.Content = content;
             return request;
+        }
+
+        private HttpRequestMessage BuildMessageStatusQueryRequest(FluxTelecomMessageStatusQueryRequest requestData)
+        {
+            var queryString = BuildQueryString(new[]
+            {
+                new KeyValuePair<string, string>(STATUS_QUERY_ACCOUNT_FIELD, requestData.Account),
+                new KeyValuePair<string, string>(STATUS_QUERY_CODE_FIELD, requestData.Code),
+                new KeyValuePair<string, string>(STATUS_QUERY_TYPE_FIELD, STATUS_QUERY_TYPE),
+                new KeyValuePair<string, string>(STATUS_QUERY_IDS_FIELD, requestData.GetMessageIdsText())
+            });
+
+            var request = new HttpRequestMessage(HttpMethod.Get, MESSAGE_STATUS_QUERY_URL + "?" + queryString);
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            return request;
+        }
+
+        private static string BuildQueryString(IEnumerable<KeyValuePair<string, string>> parameters)
+        {
+            var builder = new StringBuilder();
+            var first = true;
+
+            foreach (var parameter in parameters)
+            {
+                if (!first)
+                    builder.Append('&');
+
+                builder
+                    .Append(Uri.EscapeDataString(parameter.Key ?? string.Empty))
+                    .Append('=')
+                    .Append(Uri.EscapeDataString(parameter.Value ?? string.Empty));
+
+                first = false;
+            }
+
+            return builder.ToString();
         }
 
         private static HttpClient CreateDefaultHttpClient(GatewayOptions options)

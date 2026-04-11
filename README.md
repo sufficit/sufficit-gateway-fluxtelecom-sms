@@ -123,8 +123,8 @@ var sendResult = await client.SendSimpleMessageAsync(new FluxTelecomSimpleMessag
 				new FluxTelecomSimpleMessageRecipient
 				{
 						AreaCode = "21",
-						Number = "967609095",
-						Name = "Test Phone"
+						Number = "999999999",
+						Name = "Sample Recipient"
 				}
 		}
 });
@@ -172,6 +172,30 @@ var credits = await client.GetAvailableCreditsAsync();
 Console.WriteLine($"Available credits: {credits}");
 ```
 
+### Delivery status query
+
+The official provider manual documents a JSON status consultation flow in section `1.7` through `integracao3.do` with `type=C`.
+
+This gateway now exposes that flow explicitly:
+
+```csharp
+var statusResponse = await client.QueryMessageStatusesAsync(new FluxTelecomMessageStatusQueryRequest
+{
+	Account = "cliente@cliente.com.br",
+	Code = "senha",
+	MessageIds = { 1637364991, 1625346410 }
+});
+
+foreach (var message in statusResponse.Messages)
+{
+	Console.WriteLine($"MessageId: {message.MessageId}");
+	Console.WriteLine($"Status: {message.StatusDescription}");
+	Console.WriteLine($"DeliveredAt: {message.DeliveredAtText}");
+}
+```
+
+This JSON query uses the documented `account` and `code` parameters from the provider manual. It is independent from the authenticated portal session used by the portal-backed workflows.
+
 ### Other validated operations
 
 The client also exposes:
@@ -185,12 +209,11 @@ The client also exposes:
 - `GenerateCampaignFromFtpFileAsync(...)`
 - `SearchPhoneAsync(...)`
 - `DownloadPhoneSearchReportAsync(...)`
+- `QueryMessageStatusesAsync(...)`
 
 ## Delivery status note
 
-The official provider manual documents a JSON status consultation flow in section `1.7` through `integracao3.do` with `type=C` and one or more message identifiers.
-
-That delivery-status flow is intentionally documented in the public XML comments of this project, but it is not implemented yet in the current client surface.
+The official provider manual documents a JSON status consultation flow in section `1.7` through `integracao3.do` with `type=C` and one or more message identifiers, and this client now models that path directly.
 
 ## Testing
 
@@ -223,5 +246,4 @@ Use the repository issues for bugs, validation gaps, or requests for additional 
 
 ## Related
 
-- Intended future integration target: `sufficit-exchange-worker`
 - Provider domain: Flux Telecom SMS portal and official manual
