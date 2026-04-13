@@ -57,7 +57,7 @@ The project targets:
 This repository now follows the official Sufficit package versioning pattern.
 
 - `Debug`: fallback development version `1.99.0.0`
-- `Release` and `Packing`: timestamped version `1.yy.MMdd.HHmm`
+- `Release`: timestamped version `1.yy.MMdd.HHmm`
 
 Example:
 
@@ -69,7 +69,6 @@ The package/build configuration now includes:
 
 - `Debug`
 - `Release`
-- `Packing`
 
 ## Configuration
 
@@ -237,6 +236,8 @@ Console.WriteLine($"Return code: {sendResponse.Code}");
 Console.WriteLine($"Return description: {sendResponse.ReturnDescription}");
 ```
 
+When the provider answers `200 OK` with plain text instead of JSON, the client now treats that documented shape as an accepted send and copies the returned token into `MessageId`. In practice this token may be either the provider-generated numeric code or the same `PartnerId` echoed back by `/envio`.
+
 For grouped sends:
 
 ```csharp
@@ -319,12 +320,12 @@ dotnet test test/Sufficit.Gateway.FluxTelecom.SMS.Tests.csproj -c Release
 
 ## NuGet package generation
 
-The project is prepared for local package generation through the official Sufficit `Packing` configuration.
+The project is prepared for local package generation through the standard `Release` configuration.
 
 Create the package locally with:
 
 ```bash
-dotnet pack src/Sufficit.Gateway.FluxTelecom.SMS.csproj --configuration Packing --output src/nupkgs
+dotnet pack src/Sufficit.Gateway.FluxTelecom.SMS.csproj --configuration Release --output src/nupkgs
 ```
 
 The generated `.nupkg` files will be written to:

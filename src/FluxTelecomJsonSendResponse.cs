@@ -22,7 +22,8 @@ namespace Sufficit.Gateway.FluxTelecom.SMS
         public string? ReturnDescription { get; set; }
 
         /// <summary>
-        /// Provider message identifier returned in <c>id_mensagem</c> when the endpoint answers with a platform id.
+        /// Provider message identifier returned in <c>id_mensagem</c> when the endpoint answers with JSON,
+        /// or the accepted plain-text token echoed by the provider when <c>/envio</c> returns text instead of JSON.
         /// </summary>
         [JsonPropertyName("id_mensagem")]
         [JsonConverter(typeof(FluxTelecomStringOrNumberJsonConverter))]

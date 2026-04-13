@@ -12,6 +12,50 @@ namespace Sufficit.Gateway.FluxTelecom.SMS.Tests
     public class FluxTelecomSmsClientTests
     {
         [Fact]
+        public async Task AuthenticateAsync_FallsBackToDashboardWithoutRecursiveReauthentication()
+        {
+            using var handler = new RecordingHttpMessageHandler(request =>
+            {
+                if (request.RequestUri!.AbsolutePath.EndsWith("/login.do", StringComparison.OrdinalIgnoreCase))
+                    return CreateHtmlResponse(request, SampleHtml.LoginHtml);
+
+                return CreateHtmlResponse(request, SampleHtml.DashboardHtml);
+            });
+
+            using var client = FluxTelecomSmsClientTestFactory.Create(handler);
+
+            var dashboard = await client.AuthenticateAsync();
+
+            Assert.Equal("SUFFICIT", dashboard.UserName);
+            Assert.Equal(330, dashboard.AvailableCredits);
+            Assert.Equal(2, handler.Requests.Count);
+            Assert.EndsWith("login.do", handler.Requests[0].RequestUri, StringComparison.OrdinalIgnoreCase);
+            Assert.EndsWith("campanhalista.do", handler.Requests[1].RequestUri, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public async Task AuthenticateAsync_UsesBrowserCompatibleMultipartLoginPayload()
+        {
+            using var handler = new RecordingHttpMessageHandler(request =>
+            {
+                if (request.RequestUri!.AbsolutePath.EndsWith("/login.do", StringComparison.OrdinalIgnoreCase))
+                    return CreateHtmlResponse(request, SampleHtml.LoginHtml);
+
+                return CreateHtmlResponse(request, SampleHtml.DashboardHtml);
+            });
+
+            using var client = FluxTelecomSmsClientTestFactory.Create(handler);
+
+            await client.AuthenticateAsync();
+
+            Assert.StartsWith("multipart/form-data; boundary=----SufficitFluxBoundary", handler.Requests[0].ContentType, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("Content-Disposition: form-data; name=\"acao\"", handler.Requests[0].Body, StringComparison.Ordinal);
+            Assert.Contains("Content-Disposition: form-data; name=\"usuarioVo.nomEmail\"", handler.Requests[0].Body, StringComparison.Ordinal);
+            Assert.Contains("Content-Disposition: form-data; name=\"usuarioVo.nomSenha\"", handler.Requests[0].Body, StringComparison.Ordinal);
+            Assert.DoesNotContain("Content-Type: text/plain", handler.Requests[0].Body, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
         public async Task GetDashboardAsync_ParsesCreditsAndMenuItems()
         {
             using var handler = new RecordingHttpMessageHandler(request => CreateHtmlResponse(request, SampleHtml.DashboardHtml));
@@ -212,6 +256,158 @@ namespace Sufficit.Gateway.FluxTelecom.SMS.Tests
         }
 
         [Fact]
+        public async Task QueryRepliesAsync_PostsExpectedFieldsAndParsesRows()
+        {
+            using var handler = new RecordingHttpMessageHandler(request =>
+            {
+                var requestBody = request.Content?.ReadAsStringAsync().GetAwaiter().GetResult() ?? string.Empty;
+
+                if (request.RequestUri!.AbsolutePath.EndsWith("/respostalista.do", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(request.Method.Method, "POST", StringComparison.OrdinalIgnoreCase)
+                    && requestBody.IndexOf("acao=AJAX", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return CreateHtmlResponse(request, SampleHtml.ReplyListAjaxHtml);
+                }
+
+                return CreateHtmlResponse(request, SampleHtml.DashboardHtml);
+            });
+
+            using var client = FluxTelecomSmsClientTestFactory.Create(handler);
+            var filter = new FluxTelecomReplySearchRequest()
+            {
+                StartDate = new DateTime(2026, 4, 3),
+                EndDate = new DateTime(2026, 4, 13),
+                Page = 2,
+                PhoneFilter = "(11) 99999-9999, 2133334444",
+                CostCenterIds = "5, 7",
+                CampaignIds = "2640364, 2640999"
+            };
+
+            var items = await client.QueryRepliesAsync(filter);
+
+            Assert.Single(items);
+            Assert.Equal(63032547, items[0].ReplyId);
+            Assert.Equal(2640364, items[0].CampaignId);
+            Assert.Equal(7282283051, items[0].MessageId);
+            Assert.Equal("Mensagem Simples - 13/04/2026", items[0].CampaignName);
+            Assert.Equal("Sem Centro de Custo", items[0].CostCenterDescription);
+            Assert.Equal("teste", items[0].SentMessage);
+            Assert.Equal("Ok", items[0].ReplyText);
+            Assert.Equal("5511999999999", items[0].SenderPhone);
+            Assert.Equal("Cliente Teste", items[0].SenderContactHint);
+            Assert.Equal("13/04/2026 14:48:05", items[0].ReceivedAtText);
+
+            var request = handler.Requests.First(httpRequest => httpRequest.RequestUri.EndsWith("respostalista.do", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(httpRequest.Method, "POST", StringComparison.OrdinalIgnoreCase)
+                && httpRequest.Body.IndexOf("acao=AJAX", StringComparison.OrdinalIgnoreCase) >= 0);
+            var decoded = WebUtility.UrlDecode(request.Body);
+
+            Assert.Contains("acao=AJAX", decoded, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("respostaVo.pagina=2", decoded, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("respostaVo.datInicial=03/04/2026", decoded, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("respostaVo.datFinal=13/04/2026", decoded, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("respostaVo.dddTelefone=11999999999,2133334444", decoded, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("centroCustoVo.idsCentroCusto=5,7", decoded, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("campanhaVo.idsCampanhas=2640364,2640999", decoded, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public async Task ListUsersAsync_ParsesPortalUserRows()
+        {
+            using var handler = new RecordingHttpMessageHandler(request =>
+            {
+                if (request.RequestUri!.AbsolutePath.EndsWith("/usuariolista.do", StringComparison.OrdinalIgnoreCase))
+                    return CreateHtmlResponse(request, SampleHtml.UserListAjaxHtml);
+
+                return CreateHtmlResponse(request, SampleHtml.DashboardHtml);
+            });
+
+            using var client = FluxTelecomSmsClientTestFactory.Create(handler);
+            var users = await client.ListUsersAsync();
+
+            Assert.Single(users);
+            Assert.Equal(11461, users[0].UserId);
+            Assert.Equal("SUFFICIT (Adm. Empresa)", users[0].Name);
+            Assert.Equal("sufficit@massiva.net.br", users[0].Email);
+            Assert.True(users[0].IsActive);
+
+            var request = handler.Requests.Last();
+            Assert.EndsWith("usuariolista.do", request.RequestUri, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal("acao=AJAX", request.Body);
+        }
+
+        [Fact]
+        public async Task EnsureAuthorizedIpsAsync_MergesRequestedIpsIntoExistingPortalUser()
+        {
+            const string mergedIpList = "187.108.200.77,45.233.44.244,143.208.224.20";
+
+            using var handler = new RecordingHttpMessageHandler(request =>
+            {
+                if (request.RequestUri!.AbsolutePath.EndsWith("/usuariolista.do", StringComparison.OrdinalIgnoreCase))
+                    return CreateHtmlResponse(request, SampleHtml.UserListAjaxHtml);
+
+                if (request.RequestUri.AbsolutePath.EndsWith("/usuariocadastro.do", StringComparison.OrdinalIgnoreCase))
+                    return CreateHtmlResponse(request, SampleHtml.UserEditHtml);
+
+                if (request.RequestUri.AbsolutePath.EndsWith("/usuarioatualizar.do", StringComparison.OrdinalIgnoreCase))
+                    return CreateHtmlResponse(request, SampleHtml.UserEditHtml.Replace("187.108.200.77,45.233.44.244", mergedIpList, StringComparison.Ordinal));
+
+                return CreateHtmlResponse(request, SampleHtml.DashboardHtml);
+            });
+
+            using var client = FluxTelecomSmsClientTestFactory.Create(handler);
+            var result = await client.EnsureAuthorizedIpsAsync(new FluxTelecomPortalUserAuthorizedIpUpdateRequest()
+            {
+                Email = "sufficit@massiva.net.br",
+                AuthorizedIps = { "143.208.224.20" }
+            });
+
+            Assert.True(result.WasUpdated);
+            Assert.Equal(11461, result.UserId);
+            Assert.Equal("SUFFICIT", result.UserName);
+            Assert.Equal("sufficit@massiva.net.br", result.Email);
+            Assert.Equal(2, result.OriginalAuthorizedIps.Count);
+            Assert.Equal(3, result.AuthorizedIps.Count);
+            Assert.Contains("143.208.224.20", result.AuthorizedIps);
+
+            var updateRequest = handler.Requests.Last();
+            Assert.EndsWith("usuarioatualizar.do", updateRequest.RequestUri, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("multipart/form-data", updateRequest.ContentType, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("Content-Disposition: form-data; name=\"usuarioVo.idUsuario\"", updateRequest.Body, StringComparison.Ordinal);
+            Assert.Contains("Content-Disposition: form-data; name=\"usuarioVo.nroIp\"", updateRequest.Body, StringComparison.Ordinal);
+            Assert.Contains(mergedIpList, updateRequest.Body, StringComparison.Ordinal);
+            Assert.Contains("Content-Disposition: form-data; name=\"grupoAcessoVo.dynamicField(indStatus@idGrupo#7)\"", updateRequest.Body, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public async Task EnsureAuthorizedIpsAsync_SkipsPortalUpdateWhenRequestedIpsAlreadyExist()
+        {
+            const string currentIpList = "187.108.200.77,45.233.44.244,143.208.224.20";
+
+            using var handler = new RecordingHttpMessageHandler(request =>
+            {
+                if (request.RequestUri!.AbsolutePath.EndsWith("/usuariolista.do", StringComparison.OrdinalIgnoreCase))
+                    return CreateHtmlResponse(request, SampleHtml.UserListAjaxHtml);
+
+                if (request.RequestUri.AbsolutePath.EndsWith("/usuariocadastro.do", StringComparison.OrdinalIgnoreCase))
+                    return CreateHtmlResponse(request, SampleHtml.UserEditHtml.Replace("187.108.200.77,45.233.44.244", currentIpList, StringComparison.Ordinal));
+
+                return CreateHtmlResponse(request, SampleHtml.DashboardHtml);
+            });
+
+            using var client = FluxTelecomSmsClientTestFactory.Create(handler);
+            var result = await client.EnsureAuthorizedIpsAsync(new FluxTelecomPortalUserAuthorizedIpUpdateRequest()
+            {
+                Email = "sufficit@massiva.net.br",
+                AuthorizedIps = { "143.208.224.20" }
+            });
+
+            Assert.False(result.WasUpdated);
+            Assert.Equal(3, result.AuthorizedIps.Count);
+            Assert.DoesNotContain(handler.Requests, request => request.RequestUri.EndsWith("usuarioatualizar.do", StringComparison.OrdinalIgnoreCase));
+        }
+
+        [Fact]
         public async Task SendSimpleMessageAsync_PostsExpectedPortalFields()
         {
             using var handler = new RecordingHttpMessageHandler(request => CreateHtmlResponse(request, SampleHtml.DashboardHtml));
@@ -291,9 +487,42 @@ namespace Sufficit.Gateway.FluxTelecom.SMS.Tests
         }
 
         [Fact]
+        public async Task QueryMessageStatusesAsync_ThrowsWhenProviderReturnsInvalidUser()
+        {
+            const string json = "{\"codigo\":\"900\",\"descricao_retorno\":\"USUARIO INVALIDO\"}";
+
+            using var handler = new RecordingHttpMessageHandler(request =>
+            {
+                if (request.RequestUri!.AbsoluteUri.StartsWith("http://apisms.fluxtelecom.com.br/integracao3.do", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        RequestMessage = request,
+                        Content = new StringContent(json, Encoding.UTF8, "application/json")
+                    };
+                }
+
+                return CreateHtmlResponse(request, SampleHtml.DashboardHtml);
+            });
+
+            using var client = FluxTelecomSmsClientTestFactory.Create(handler);
+
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => client.QueryMessageStatusesAsync(new FluxTelecomMessageStatusQueryRequest()
+            {
+                Account = "cliente@cliente.com.br",
+                Code = "senha",
+                MessageIds = { 900 }
+            }));
+
+            Assert.Contains("USUARIO INVALIDO", exception.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("Email", exception.Message, StringComparison.Ordinal);
+        }
+
+        [Fact]
         public async Task SendJsonMessageAsync_PostsOfficialJsonPayloadWithCallbackHeaders()
         {
             const string json = "{\"id_mensagem\":1726868950}";
+            const string callbackUrl = "https://endpoints.sufficit.com.br/Gateway/FluxTelecomSms/Callback";
 
             using var handler = new RecordingHttpMessageHandler(request =>
             {
@@ -316,7 +545,7 @@ namespace Sufficit.Gateway.FluxTelecom.SMS.Tests
                 SendType = "1",
                 Message = "Test callback message",
                 PartnerId = "envio-json-001",
-                CallbackUrl = "https://example.test/sms/callback",
+                CallbackUrl = callbackUrl,
                 CallbackToken = "callback-token"
             });
 
@@ -335,8 +564,171 @@ namespace Sufficit.Gateway.FluxTelecom.SMS.Tests
             Assert.Equal("1", root.GetProperty("tipoEnvio").GetString());
             Assert.Equal("Test callback message", root.GetProperty("msg").GetString());
             Assert.Equal("envio-json-001", root.GetProperty("id").GetString());
-            Assert.Equal("https://example.test/sms/callback", root.GetProperty("urlCallback").GetString());
+            Assert.Equal(callbackUrl, root.GetProperty("urlCallback").GetString());
             Assert.Equal("callback-token", root.GetProperty("tokenCallback").GetString());
+        }
+
+        [Fact]
+        public async Task SendJsonMessageAsync_AcceptsPlainTextPartnerIdEchoAsSuccessfulResponse()
+        {
+            const string partnerId = "diag-json-20260413-121300";
+
+            using var handler = new RecordingHttpMessageHandler(request =>
+            {
+                if (request.RequestUri!.AbsoluteUri.StartsWith("http://apisms.fluxtelecom.com.br/envio", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        RequestMessage = request,
+                        Content = new StringContent(partnerId, Encoding.UTF8, "text/html")
+                    };
+                }
+
+                return CreateHtmlResponse(request, SampleHtml.DashboardHtml);
+            });
+
+            using var client = FluxTelecomSmsClientTestFactory.Create(handler);
+            var response = await client.SendJsonMessageAsync(new FluxTelecomJsonMessageRequest()
+            {
+                To = "5511999999999",
+                SendType = "1",
+                Message = "Test plain text partner id",
+                PartnerId = partnerId
+            });
+
+            Assert.Equal(partnerId, response.MessageId);
+            Assert.Null(response.Code);
+            Assert.Null(response.ReturnDescription);
+        }
+
+        [Fact]
+        public async Task SendJsonMessageAsync_AcceptsPlainTextGeneratedMessageCodeAsSuccessfulResponse()
+        {
+            const string providerMessageId = "2026041317760944705234924";
+
+            using var handler = new RecordingHttpMessageHandler(request =>
+            {
+                if (request.RequestUri!.AbsoluteUri.StartsWith("http://apisms.fluxtelecom.com.br/envio", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        RequestMessage = request,
+                        Content = new StringContent(providerMessageId, Encoding.UTF8, "text/html")
+                    };
+                }
+
+                return CreateHtmlResponse(request, SampleHtml.DashboardHtml);
+            });
+
+            using var client = FluxTelecomSmsClientTestFactory.Create(handler);
+            var response = await client.SendJsonMessageAsync(new FluxTelecomJsonMessageRequest()
+            {
+                To = "5511999999999",
+                SendType = "1",
+                Message = "Test plain text generated id"
+            });
+
+            Assert.Equal(providerMessageId, response.MessageId);
+            Assert.Null(response.Code);
+            Assert.Null(response.ReturnDescription);
+        }
+
+        [Fact]
+        public async Task SendJsonMessageAsync_UsesPortalCredentialsAsAccountAndCodeHeaders()
+        {
+            const string json = "{\"id_mensagem\":\"1726868951\"}";
+
+            using var handler = new RecordingHttpMessageHandler(request =>
+            {
+                if (request.RequestUri!.AbsoluteUri.StartsWith("http://apisms.fluxtelecom.com.br/envio", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        RequestMessage = request,
+                        Content = new StringContent(json, Encoding.UTF8, "application/json")
+                    };
+                }
+
+                return CreateHtmlResponse(request, SampleHtml.DashboardHtml);
+            });
+
+            using var client = FluxTelecomSmsClientTestFactory.Create(handler, new FluxTelecomCredentials()
+            {
+                Email = "portal@example.test",
+                Password = "secret"
+            });
+
+            await client.SendJsonMessageAsync(new FluxTelecomJsonMessageRequest()
+            {
+                To = "5511999999999",
+                SendType = "1",
+                Message = "Test API credentials"
+            });
+
+            var request = handler.Requests[0];
+            Assert.Equal("portal@example.test", request.Headers["account"]);
+            Assert.Equal("secret", request.Headers["code"]);
+        }
+
+        [Fact]
+        public async Task SendJsonMessageAsync_ThrowsHelpfulMessageForPlainTextProviderError()
+        {
+            using var handler = new RecordingHttpMessageHandler(request =>
+            {
+                if (request.RequestUri!.AbsoluteUri.StartsWith("http://apisms.fluxtelecom.com.br/envio", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        RequestMessage = request,
+                        Content = new StringContent("FORMATO JSON INVALIDO", Encoding.UTF8, "text/html")
+                    };
+                }
+
+                return CreateHtmlResponse(request, SampleHtml.DashboardHtml);
+            });
+
+            using var client = FluxTelecomSmsClientTestFactory.Create(handler);
+
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => client.SendJsonMessageAsync(new FluxTelecomJsonMessageRequest()
+            {
+                To = "5511999999999",
+                SendType = "1",
+                Message = "Test plain text error"
+            }));
+
+            Assert.Contains("FORMATO JSON INVALIDO", exception.Message, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public async Task SendJsonMessageAsync_ThrowsWhenProviderReturnsInvalidUserCode()
+        {
+            const string json = "{\"codigo\":\"900\",\"descricao_retorno\":\"USUARIO INVALIDO\"}";
+
+            using var handler = new RecordingHttpMessageHandler(request =>
+            {
+                if (request.RequestUri!.AbsoluteUri.StartsWith("http://apisms.fluxtelecom.com.br/envio", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        RequestMessage = request,
+                        Content = new StringContent(json, Encoding.UTF8, "application/json")
+                    };
+                }
+
+                return CreateHtmlResponse(request, SampleHtml.DashboardHtml);
+            });
+
+            using var client = FluxTelecomSmsClientTestFactory.Create(handler);
+
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => client.SendJsonMessageAsync(new FluxTelecomJsonMessageRequest()
+            {
+                To = "5511999999999",
+                SendType = "1",
+                Message = "Test invalid user code"
+            }));
+
+            Assert.Contains("USUARIO INVALIDO", exception.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("Email", exception.Message, StringComparison.Ordinal);
         }
 
         [Fact]

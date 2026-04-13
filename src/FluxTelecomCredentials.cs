@@ -1,7 +1,7 @@
 namespace Sufficit.Gateway.FluxTelecom.SMS
 {
     /// <summary>
-    /// Login credentials used by the Flux Telecom portal session.
+    /// Login credentials used by the Flux Telecom portal session and by the official account/code API surface.
     /// </summary>
     public class FluxTelecomCredentials
     {
@@ -19,5 +19,22 @@ namespace Sufficit.Gateway.FluxTelecom.SMS
         /// Portal account password.
         /// </summary>
         public string Password { get; set; } = default!;
+
+        /// <summary>
+        /// Resolves the effective account header used by the official JSON API.
+        /// </summary>
+        /// <returns>The trimmed account value when available; otherwise <see langword="null"/>.</returns>
+        public string? GetResolvedAccount()
+            => NormalizeOptionalText(Email);
+
+        /// <summary>
+        /// Resolves the effective code header used by the official JSON API.
+        /// </summary>
+        /// <returns>The trimmed code value when available; otherwise <see langword="null"/>.</returns>
+        public string? GetResolvedCode()
+            => NormalizeOptionalText(Password);
+
+        private static string? NormalizeOptionalText(string? value)
+            => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     }
 }

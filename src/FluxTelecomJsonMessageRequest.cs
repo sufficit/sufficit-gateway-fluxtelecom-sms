@@ -8,8 +8,6 @@ namespace Sufficit.Gateway.FluxTelecom.SMS
     /// </summary>
     public class FluxTelecomJsonMessageRequest
     {
-        private const int MAX_CALLBACK_URL_LENGTH = 50;
-
         /// <summary>
         /// Recipient phone number formatted according to the provider examples, such as <c>11988889999</c> or <c>5511988889999</c>.
         /// </summary>
@@ -161,9 +159,6 @@ namespace Sufficit.Gateway.FluxTelecom.SMS
 
             if (!string.IsNullOrWhiteSpace(CallbackUrl))
             {
-                if (CallbackUrl.Length > MAX_CALLBACK_URL_LENGTH)
-                    throw new ArgumentException("CallbackUrl exceeds the documented provider limit of 50 characters.", nameof(CallbackUrl));
-
                 if (!Uri.IsWellFormedUriString(CallbackUrl, UriKind.Absolute))
                     throw new ArgumentException("CallbackUrl must be a valid absolute URL.", nameof(CallbackUrl));
             }
