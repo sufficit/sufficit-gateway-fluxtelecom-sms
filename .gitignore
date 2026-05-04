@@ -1,6 +1,7 @@
 .vs/
 **/bin/
 **/obj/
+**/tmp/
 TestResults/
 test/appsettings.json
 api-v2.7.2.pdf
