@@ -8,3 +8,5 @@ api-v2.7.2.pdf
 src/nupkgs/
 *.nupkg
 *.snupkg
+**/.artifacts/
+**/artifacts/
